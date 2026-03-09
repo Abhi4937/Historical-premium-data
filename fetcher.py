@@ -56,20 +56,22 @@ def get_expiries(client: DeltaClient, underlying: str) -> dict:
     products = resp.get("result", [])
     now = datetime.now(tz=timezone.utc)
 
-    # Collect unique expiry dates
+    # Collect unique expiry tags → datetime
+    # Symbol format: C-BTC-STRIKE-DDMMYY  e.g. C-BTC-69000-110326 → tag=110326 = 11 Mar 2026
     expiry_dates = {}
     for p in products:
-        expiry_str = p.get("settlement_time") or p.get("expiry_time", "")
         symbol = p.get("symbol", "")
-        if not expiry_str:
+        tag = _extract_expiry_tag(symbol)
+        if not tag:
             continue
         try:
-            dt = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+            # Parse DDMMYY → datetime
+            day   = int(tag[0:2])
+            month = int(tag[2:4])
+            year  = 2000 + int(tag[4:6])
+            dt = datetime(year, month, day, 12, 0, 0, tzinfo=timezone.utc)
             if dt > now:
-                # Extract the tag used in symbols e.g. '28MAR25'
-                tag = _extract_expiry_tag(symbol)
-                if tag:
-                    expiry_dates[tag] = dt
+                expiry_dates[tag] = dt
         except Exception:
             continue
 
@@ -80,15 +82,9 @@ def get_expiries(client: DeltaClient, underlying: str) -> dict:
     # Sort by date
     sorted_expiries = sorted(expiry_dates.items(), key=lambda x: x[1])
 
-    # Separate weeklies (expire on Fridays) from monthlies (last Friday of month)
-    weeklies = []
-    monthlies = []
-    for tag, dt in sorted_expiries:
-        # Monthly expiries are typically on the last Friday — day >= 25
-        if dt.day >= 25:
-            monthlies.append((tag, dt))
-        else:
-            weeklies.append((tag, dt))
+    # Separate weeklies from monthlies — monthlies expire on last Friday (day >= 25)
+    weeklies  = [(tag, dt) for tag, dt in sorted_expiries if dt.day < 25]
+    monthlies = [(tag, dt) for tag, dt in sorted_expiries if dt.day >= 25]
 
     result = {}
     if weeklies:
@@ -105,14 +101,16 @@ def get_expiries(client: DeltaClient, underlying: str) -> dict:
 
 
 def _extract_expiry_tag(symbol: str) -> Optional[str]:
-    """Extract expiry tag from symbol e.g. 'C-BTC-28MAR25-80000' → '28MAR25'."""
+    """
+    Extract expiry tag from symbol.
+    Delta Exchange India format: 'C-BTC-69000-110326' → last part '110326' (DDMMYY)
+    """
     parts = symbol.split("-")
-    # Format: C-BTC-28MAR25-80000 → parts[2] is the expiry
-    for part in parts:
-        if len(part) >= 5 and any(m in part for m in
-                                   ["JAN","FEB","MAR","APR","MAY","JUN",
-                                    "JUL","AUG","SEP","OCT","NOV","DEC"]):
-            return part
+    # Format: C-BTC-STRIKE-DDMMYY → last part is expiry
+    if len(parts) >= 4:
+        tag = parts[-1]
+        if len(tag) == 6 and tag.isdigit():
+            return tag
     return None
 
 
@@ -224,7 +222,8 @@ def get_option_symbols(
 
         matching = [
             p for p in products
-            if expiry_tag.upper() in p.get("symbol", "").upper()
+            if _extract_expiry_tag(p.get("symbol", "")) == expiry_tag
+            and p.get("contract_type") in ("call_options", "put_options")
         ]
         all_products.extend(matching)
 
@@ -270,7 +269,10 @@ def fetch_candles(
                 "start": current_start,
                 "end": current_end,
             })
-            candles = resp.get("result", {}).get("candles", [])
+            # API returns result as a list directly
+            candles = resp.get("result", [])
+            if isinstance(candles, dict):
+                candles = candles.get("candles", [])
             if candles:
                 all_candles.extend(candles)
         except Exception as e:
