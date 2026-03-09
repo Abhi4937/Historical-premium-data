@@ -1,0 +1,9 @@
+venv/
+accounts.json
+*.csv
+*.parquet
+data/
+logs/
+__pycache__/
+*.pyc
+.env
