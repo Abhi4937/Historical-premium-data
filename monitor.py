@@ -16,10 +16,12 @@ Overall stats:
   - Final summary report on completion
 """
 
+import logging
 import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
@@ -28,6 +30,8 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+LOG_PATH = Path(__file__).parent / "monitor.log"
 
 
 class AccountState:
@@ -114,12 +118,27 @@ class Monitor:
         self.total_months = len(months_list)
         self.start_time   = datetime.now(tz=timezone.utc)
         self.start_ts     = time.time()
-        self._log         : deque = deque(maxlen=12)  # last 12 log lines
+        self._log         : deque = deque(maxlen=12)  # last 12 log lines for dashboard
         self._log_lock    = threading.Lock()
         self._live        : Optional[Live] = None
         self._stop_event  = threading.Event()
         self._thread      : Optional[threading.Thread] = None
         self.console      = Console()
+
+        # File logger — writes every event + periodic snapshots to monitor.log
+        self._file_logger = logging.getLogger("monitor.file")
+        self._file_logger.setLevel(logging.DEBUG)
+        self._file_logger.propagate = False
+        if not self._file_logger.handlers:
+            fh = logging.FileHandler(LOG_PATH, mode="a", encoding="utf-8")
+            fh.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+            self._file_logger.addHandler(fh)
+
+        self._file_logger.info("=" * 70)
+        self._file_logger.info("SESSION START  accounts=%s  total_months=%d",
+                               account_names, len(months_list))
+        self._file_logger.info("Months queue: %s",
+                               [f"{y}-{m:02d}" for y, m in months_list])
 
     # ── public log method (call from workers) ────────────────────────────────
 
@@ -128,6 +147,8 @@ class Monitor:
         colour = {"info": "white", "ok": "green", "warn": "yellow", "error": "red"}.get(level, "white")
         with self._log_lock:
             self._log.append(f"[{colour}][{ts}] {message}[/{colour}]")
+        # Always write to file with level prefix
+        self._file_logger.info("[%-5s] %s", level.upper(), message)
 
     # ── start / stop ──────────────────────────────────────────────────────────
 
@@ -141,13 +162,40 @@ class Monitor:
             self._thread.join(timeout=3)
 
     def _run(self):
+        last_snapshot = time.time()
+        snapshot_interval = 60  # log full state snapshot every 60 seconds
+
         with Live(self._build_layout(), refresh_per_second=2,
                   console=self.console, screen=False) as live:
             self._live = live
             while not self._stop_event.is_set():
                 live.update(self._build_layout())
+
+                # Periodic snapshot to file every 60s
+                if time.time() - last_snapshot >= snapshot_interval:
+                    self._log_snapshot()
+                    last_snapshot = time.time()
+
                 time.sleep(0.5)
             live.update(self._build_layout())
+
+    def _log_snapshot(self):
+        """Write a full state snapshot to monitor.log every 60 seconds."""
+        wall = time.time() - self.start_ts
+        months_done = sum(len(s.months_done) for s in self.state.values())
+        self._file_logger.info("-" * 70)
+        self._file_logger.info("SNAPSHOT  elapsed=%s  months=%d/%d",
+                               _fmt_seconds(wall), months_done, self.total_months)
+        for s in self.state.values():
+            self._file_logger.info(
+                "  %-12s  status=%-8s  month=%-8s  contracts=%d/%d  "
+                "errors=%d  missing=%d  next=%-8s  done=%s",
+                s.name, s.status, s.current_month,
+                s.contracts_done, s.contracts_total,
+                s.errors, s.missing, s.next_month,
+                ",".join(s.months_done) or "-",
+            )
+        self._file_logger.info("-" * 70)
 
     # ── layout builders ───────────────────────────────────────────────────────
 
@@ -264,6 +312,22 @@ class Monitor:
         total_errors  = sum(s.errors  for s in self.state.values())
         total_missing = sum(s.missing for s in self.state.values())
         months_done   = sum(len(s.months_done) for s in self.state.values())
+
+        # Write full summary to monitor.log
+        self._file_logger.info("=" * 70)
+        self._file_logger.info("SESSION END")
+        self._file_logger.info("  Total wall time   : %s", _fmt_seconds(wall))
+        self._file_logger.info("  Months completed  : %d / %d", months_done, self.total_months)
+        self._file_logger.info("  Total errors      : %d", total_errors)
+        self._file_logger.info("  Missing data gaps : %d", total_missing)
+        self._file_logger.info("  Started at        : %s", self.start_time.strftime("%Y-%m-%d %H:%M:%S UTC"))
+        for s in self.state.values():
+            self._file_logger.info(
+                "  %-12s  months=%d  avg_per_month=%s  errors=%d  missing=%d  completed=%s",
+                s.name, len(s.months_done), _fmt_seconds(s.avg_month_time),
+                s.errors, s.missing, ",".join(s.months_done) or "-",
+            )
+        self._file_logger.info("=" * 70)
 
         tbl = Table(title="Final Summary", header_style="bold magenta", border_style="green")
         tbl.add_column("Metric",  style="bold")
