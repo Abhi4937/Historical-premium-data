@@ -14,7 +14,7 @@ Fetch historical 1-min OHLC option premium data from Delta Exchange API across m
 - `main.py` — CLI, parallel ThreadPoolExecutor, work queue
 - `client.py` — DeltaClient, HMAC-SHA256 auth, exponential backoff
 - `fetcher.py` — product listing, candle fetching, month orchestration
-- `storage.py` — SQLite save/load (data/ohlc.db), WAL mode, thread-safe writes
+- `storage.py` — Parquet files + DuckDB query engine (data/parquet/{expiry}/{YYYY-MM}.parquet)
 - `accounts.json` — credentials (gitignored, copy from accounts.json.template)
 - `data/` — output files (gitignored)
 
@@ -44,9 +44,10 @@ timestamp, symbol, expiry, strike, side, account, open, high, low, close, volume
 - Never hardcode credentials — always use accounts.json
 - 1-second candles NOT available — minimum is 1m
 
-## Query examples (SQLite)
+## Query examples (DuckDB on Parquet)
 ```python
-from storage import load_ohlc
+from storage import load_ohlc, query
 df = load_ohlc(expiry='28MAR25', strike=80000, side='call')
 df = load_ohlc(expiry='28MAR25', year=2025, month=3)
+df = query("SELECT strike, AVG(close) FROM ohlc GROUP BY strike ORDER BY strike")
 ```
