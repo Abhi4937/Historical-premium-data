@@ -302,6 +302,7 @@ def fetch_month_ohlc(
     resolution: str = DEFAULT_RESOLUTION,
     underlying: Optional[str] = None,
     atm_strike: Optional[float] = None,
+    progress_callback=None,   # callable(done: int, total: int) for live monitor
 ) -> pd.DataFrame:
     """
     Fetch OHLC for all option contracts of a given expiry across a full calendar month,
@@ -326,12 +327,15 @@ def fetch_month_ohlc(
         return pd.DataFrame()
 
     all_frames = []
+    total = len(products)
     for i, product in enumerate(products, 1):
         symbol = product["symbol"]
         strike = product.get("strike_price", "")
         side = "call" if "call" in product.get("contract_type", "").lower() else "put"
 
-        logger.info("[%s] (%d/%d) %s", client.account_name, i, len(products), symbol)
+        logger.info("[%s] (%d/%d) %s", client.account_name, i, total, symbol)
+        if progress_callback:
+            progress_callback(i, total)
 
         df = fetch_candles(client, symbol, start_ts, end_ts, resolution)
         if df.empty:

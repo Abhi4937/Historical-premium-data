@@ -4,3 +4,4 @@ python-dateutil>=2.9.0
 tqdm>=4.65.0
 duckdb>=1.0.0
 pyarrow>=14.0.0
+rich>=13.0.0
