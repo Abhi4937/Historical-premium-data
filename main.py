@@ -41,9 +41,9 @@ from dateutil.relativedelta import relativedelta
 IST = timezone(timedelta(hours=5, minutes=30))
 
 from client import DeltaClient
-from fetcher import fetch_month_ohlc, get_expiries, get_atm_strike
+from fetcher import fetch_month_ohlc, get_expiries, fetch_spot_candles
 from monitor import Monitor
-from storage import save_ohlc, init_db
+from storage import save_ohlc, save_spot, init_db
 
 # ── Logging — file only (rich handles terminal output) ────────────────────────
 logging.basicConfig(
@@ -111,6 +111,14 @@ def worker(
 
         state.start_month(year, month, next_ym)
         monitor.log(f"[{name}] ▶ Started {year}-{month:02d}")
+
+        # Step 1: fetch and save spot candles for this month (once per month, shared)
+        spot_df = fetch_spot_candles(client, year, month)
+        if not spot_df.empty:
+            save_spot(spot_df, year, month)
+            monitor.log(f"[{name}] Spot saved {year}-{month:02d} — {len(spot_df):,} rows", "ok")
+        else:
+            monitor.log(f"[{name}] ⚠ No spot data for {year}-{month:02d}", "warn")
 
         month_ok = True
         for job in expiry_jobs:
@@ -196,11 +204,9 @@ def main():
 
     expiry_jobs = []
     for label, tag in expiry_tags.items():
-        atm = get_atm_strike(probe, args.underlying, tag)
         expiry_jobs.append({
             "label":      label,
             "expiry_tag": tag,
-            "atm_strike": atm,
             "underlying": args.underlying,
         })
 
