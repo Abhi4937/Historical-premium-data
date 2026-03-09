@@ -35,7 +35,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+from datetime import timedelta
 from dateutil.relativedelta import relativedelta
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from client import DeltaClient
 from fetcher import fetch_month_ohlc, get_expiries, get_atm_strike
@@ -70,8 +73,8 @@ def load_accounts(filepath: str) -> list[dict]:
 
 
 def build_month_queue(num_months: int, start_year: int = None, start_month: int = None) -> list[tuple]:
-    now = datetime.now(tz=timezone.utc)
-    dt = datetime(start_year or now.year, start_month or now.month, 1, tzinfo=timezone.utc)
+    now = datetime.now(tz=IST)
+    dt = datetime(start_year or now.year, start_month or now.month, 1, tzinfo=IST)
     months = []
     for _ in range(num_months):
         months.append((dt.year, dt.month))

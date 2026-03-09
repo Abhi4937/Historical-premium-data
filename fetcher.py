@@ -14,8 +14,10 @@ Endpoints used:
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+IST = timezone(timedelta(hours=5, minutes=30))  # Indian Standard Time (UTC+5:30)
 
 import pandas as pd
 
@@ -54,7 +56,7 @@ def get_expiries(client: DeltaClient, underlying: str) -> dict:
     })
 
     products = resp.get("result", [])
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=IST)
 
     # Collect unique expiry tags → datetime
     # Symbol format: C-BTC-STRIKE-DDMMYY  e.g. C-BTC-69000-110326 → tag=110326 = 11 Mar 2026
@@ -286,7 +288,8 @@ def fetch_candles(
 
     df = pd.DataFrame(all_candles)
     df.rename(columns={"time": "timestamp"}, inplace=True)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+    df["timestamp"] = (pd.to_datetime(df["timestamp"], unit="s", utc=True)
+                         .dt.tz_convert(IST))   # convert to IST
     df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
     for col in ["open", "high", "low", "close", "volume"]:
         if col in df.columns:
@@ -312,7 +315,7 @@ def fetch_month_ohlc(
     """
     from dateutil.relativedelta import relativedelta
 
-    start_dt = datetime(year, month, 1, tzinfo=timezone.utc)
+    start_dt = datetime(year, month, 1, tzinfo=IST)
     end_dt = start_dt + relativedelta(months=1)
     start_ts = int(start_dt.timestamp())
     end_ts = int(end_dt.timestamp())

@@ -20,9 +20,11 @@ import logging
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from rich.console import Console
 from rich.layout import Layout
@@ -116,7 +118,7 @@ class Monitor:
         self.state        = {name: AccountState(name) for name in account_names}
         self.months_list  = months_list
         self.total_months = len(months_list)
-        self.start_time   = datetime.now(tz=timezone.utc)
+        self.start_time   = datetime.now(tz=IST)
         self.start_ts     = time.time()
         self._log         : deque = deque(maxlen=12)  # last 12 log lines for dashboard
         self._log_lock    = threading.Lock()
@@ -135,7 +137,7 @@ class Monitor:
             self._file_logger.addHandler(fh)
 
         self._file_logger.info("=" * 70)
-        self._file_logger.info("SESSION START  accounts=%s  total_months=%d",
+        self._file_logger.info("SESSION START (IST)  accounts=%s  total_months=%d",
                                account_names, len(months_list))
         self._file_logger.info("Months queue: %s",
                                [f"{y}-{m:02d}" for y, m in months_list])
